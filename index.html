@@ -147,6 +147,16 @@
 </div>
 
 <script>
+    document.addEventListener("DOMContentLoaded", () => {
+    const tg = window.Telegram?.WebApp;
+    document.getElementById("taskList").innerHTML = `
+        <div style="padding:16px;font-size:12px;word-break:break-all;background:#fff;border-radius:12px;">
+            <b>startParam:</b> ${tg?.initDataUnsafe?.start_param || '❌ нет'}<br><br>
+            <b>chat:</b> ${JSON.stringify(tg?.initDataUnsafe?.chat) || '❌ нет'}<br><br>
+            <b>URL:</b> ${window.location.href}
+        </div>
+    `;
+});
     // ========== НАСТРОЙКИ ==========
     const API_BASE = "https://task-bot-ifzk.onrender.com";
     const API_SECRET = "MySuperSecretKey2025!";   // замените на ваш реальный ключ
