@@ -1,1 +1,367 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Мои задачи</title>
+    <style>
+        /* все стили такие же, как в предыдущей версии – копировать из рабочего варианта */
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f7fb; margin: 0; padding: 16px; padding-bottom: 80px; }
+        .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+        h2 { margin: 0; font-size: 24px; }
+        .filters { display: flex; gap: 8px; flex-wrap: wrap; }
+        .filter-btn { background: #e9ecef; border: none; padding: 6px 14px; border-radius: 20px; font-size: 13px; cursor: pointer; }
+        .filter-btn.active { background: #2481cc; color: white; }
+        .user-filter-container { margin-bottom: 16px; }
+        .user-select { width: 100%; padding: 10px 12px; border-radius: 28px; border: 1px solid #ced4da; background: white; font-size: 14px; }
+        .task-list { display: flex; flex-direction: column; gap: 10px; }
+        .task-item { background: white; border-radius: 16px; padding: 12px; display: flex; align-items: center; gap: 12px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border-left: 4px solid transparent; }
+        .task-item.status-active { border-left-color: #6c757d; }
+        .task-item.status-inprogress { border-left-color: #ffc107; background: #fff8e7; }
+        .task-item.status-done { border-left-color: #28a745; opacity: 0.7; }
+        .task-checkbox { width: 24px; height: 24px; cursor: pointer; }
+        .task-content { flex: 1; }
+        .task-title { font-weight: 500; margin-bottom: 6px; }
+        .status-done .task-title { text-decoration: line-through; color: #28a745; }
+        .task-meta { font-size: 12px; color: #6c757d; display: flex; gap: 12px; flex-wrap: wrap; }
+        .badge { background: #e9ecef; padding: 2px 8px; border-radius: 20px; font-size: 11px; }
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); backdrop-filter: blur(4px); z-index: 1000; align-items: center; justify-content: center; padding: 16px; }
+        .modal.active { display: flex; }
+        .modal-card { background: white; border-radius: 28px; max-width: 500px; width: 100%; max-height: 90%; overflow-y: auto; padding: 20px; }
+        .modal-card h3 { margin-top: 0; }
+        .detail-row { margin-bottom: 18px; }
+        .detail-label { font-weight: 600; font-size: 13px; color: #6c757d; margin-bottom: 6px; }
+        .status-buttons, .edit-buttons { display: flex; gap: 10px; flex-wrap: wrap; margin: 15px 0; }
+        button { background: #2481cc; color: white; border: none; padding: 8px 16px; border-radius: 12px; font-size: 14px; cursor: pointer; }
+        button.secondary { background: #e9ecef; color: #212529; }
+        button.danger { background: #dc3545; }
+        select, input, textarea { width: 100%; padding: 10px; border-radius: 12px; border: 1px solid #ced4da; margin-top: 5px; font-family: inherit; }
+        textarea { resize: vertical; }
+        .close-btn { float: right; background: none; color: #000; font-size: 24px; padding: 0; }
+        .empty { text-align: center; padding: 40px; color: #6c757d; }
+    </style>
+</head>
+<body>
 
+<div class="header">
+    <h2>📋 Задачи</h2>
+    <div class="filters">
+        <button class="filter-btn active" data-filter="all">Все</button>
+        <button class="filter-btn" data-filter="active">Активные</button>
+        <button class="filter-btn" data-filter="inprogress">В работе</button>
+        <button class="filter-btn" data-filter="done">Завершённые</button>
+    </div>
+</div>
+<div class="user-filter-container">
+    <select id="userSelect" class="user-select">
+        <option value="all">👥 Все пользователи</option>
+    </select>
+</div>
+<div id="taskList" class="task-list">Загрузка...</div>
+
+<div id="taskModal" class="modal">
+    <div class="modal-card">
+        <button class="close-btn" onclick="closeModal()">&times;</button>
+        <h3 id="modalTitle">Детали задачи</h3>
+        <div id="modalBody"></div>
+    </div>
+</div>
+
+<script>
+    // ========== НАСТРОЙКИ (ИЗМЕНИТЕ ПОД СЕБЯ) ==========
+    const CHAT_ID = 324914606;                     // ваш chat_id
+    const API_BASE = "https://task-bot-ifzk.onrender.com";   // URL сервера Render
+    const API_SECRET = "MySuperSecretKey2025!";    // ТО ЖЕ САМОЕ ЗНАЧЕНИЕ, что на Render
+
+    let allTasks = [];
+    let currentFilter = "all";
+    let selectedUser = "all";
+    let editMode = false;
+
+    const userSelect = document.getElementById("userSelect");
+
+    // Универсальная функция fetch с заголовком API-ключа
+    async function apiFetch(url, options = {}) {
+        const headers = {
+            'Content-Type': 'application/json',
+            'X-API-Key': API_SECRET,
+            ...options.headers
+        };
+        const response = await fetch(url, { ...options, headers });
+        if (!response.ok) {
+            if (response.status === 403) throw new Error("Неверный API-ключ");
+            throw new Error(`HTTP ${response.status}`);
+        }
+        return response;
+    }
+
+    async function loadTasks() {
+        try {
+            const resp = await apiFetch(`${API_BASE}/tasks?chat_id=${CHAT_ID}`);
+            const data = await resp.json();
+            allTasks = data;
+            updateUserSelect();
+            renderTaskList();
+        } catch (e) {
+            document.getElementById("taskList").innerHTML = '<div class="empty">❌ Ошибка загрузки. Проверьте соединение или API-ключ.</div>';
+            console.error(e);
+        }
+    }
+
+    function updateUserSelect() {
+        const usersSet = new Set();
+        allTasks.forEach(task => { if (task.assignee) usersSet.add(task.assignee); });
+        const users = Array.from(usersSet).sort();
+        const currentVal = userSelect.value;
+        userSelect.innerHTML = '<option value="all">👥 Все пользователи</option>';
+        users.forEach(u => { userSelect.innerHTML += `<option value="${escapeHtml(u)}">@${escapeHtml(u)}</option>`; });
+        if (currentVal !== "all" && users.includes(currentVal)) userSelect.value = currentVal;
+        else userSelect.value = "all";
+        selectedUser = userSelect.value;
+    }
+
+    function getFilteredAndSortedTasks() {
+        let filtered = [...allTasks];
+        if (currentFilter !== "all") filtered = filtered.filter(t => t.status === currentFilter);
+        if (selectedUser !== "all") filtered = filtered.filter(t => t.assignee === selectedUser);
+        filtered.sort((a, b) => {
+            const aDone = a.status === "done" ? 1 : 0;
+            const bDone = b.status === "done" ? 1 : 0;
+            if (aDone !== bDone) return aDone - bDone;
+            return b.id - a.id;
+        });
+        return filtered;
+    }
+
+    function renderTaskList() {
+        const container = document.getElementById("taskList");
+        const tasks = getFilteredAndSortedTasks();
+        if (!tasks.length) { container.innerHTML = '<div class="empty">✨ Нет задач.</div>'; return; }
+        container.innerHTML = tasks.map(task => {
+            let statusClass = "", statusText = "";
+            if (task.status === "active") { statusClass = "status-active"; statusText = "Активно"; }
+            else if (task.status === "inprogress") { statusClass = "status-inprogress"; statusText = "В работе"; }
+            else if (task.status === "done") { statusClass = "status-done"; statusText = "✅ Завершено"; }
+            const assigneeDisplay = task.assignee ? `👤 @${task.assignee}` : "👤 Не назначен";
+            const deadlineDisplay = task.deadline ? `⏰ ${formatDate(task.deadline)}` : "";
+            return `
+                <div class="task-item ${statusClass}" onclick="openTaskDetail(${task.id})">
+                    <div class="task-checkbox" onclick="event.stopPropagation()">
+                        <input type="checkbox" ${task.status === "done" ? "checked" : ""} onchange="toggleStatusQuick(${task.id}, this.checked)">
+                    </div>
+                    <div class="task-content">
+                        <div class="task-title">${escapeHtml(task.text)}</div>
+                        <div class="task-meta">
+                            <span>${assigneeDisplay}</span>
+                            ${deadlineDisplay ? `<span>${deadlineDisplay}</span>` : ""}
+                            <span class="badge">${statusText}</span>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join("");
+    }
+
+    async function toggleStatusQuick(taskId, isChecked) {
+        const newStatus = isChecked ? "done" : "active";
+        await updateTask(taskId, { status: newStatus });
+    }
+
+    async function updateTask(taskId, updates) {
+        try {
+            await apiFetch(`${API_BASE}/tasks/update`, {
+                method: "POST",
+                body: JSON.stringify({ task_id: taskId, ...updates })
+            });
+            await loadTasks();
+        } catch (e) { alert("Ошибка обновления: " + e.message); }
+    }
+
+    async function openTaskDetail(taskId) {
+        const task = allTasks.find(t => t.id === taskId);
+        if (!task) return;
+        editMode = false;
+        renderModal(task);
+        document.getElementById("taskModal").classList.add("active");
+    }
+
+    function renderModal(task) {
+        const modalBody = document.getElementById("modalBody");
+        if (!editMode) {
+            const statuses = [
+                { value: "active", label: "🔵 Активно" },
+                { value: "inprogress", label: "🟡 В работе" },
+                { value: "done", label: "✅ Завершено" }
+            ];
+            const assigneeOptions = getAssigneeOptions(task.assignee);
+            modalBody.innerHTML = `
+                <div class="detail-row">
+                    <div class="detail-label">Описание</div>
+                    <div>${escapeHtml(task.text)}</div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Статус</div>
+                    <div class="status-buttons">
+                        ${statuses.map(s => `
+                            <button class="${task.status === s.value ? 'secondary' : ''}" onclick="changeStatus(${task.id}, '${s.value}')">
+                                ${s.label}
+                            </button>
+                        `).join('')}
+                    </div>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Ответственный</div>
+                    <select id="assignee-select" onchange="changeAssignee(${task.id}, this.value)">
+                        ${assigneeOptions}
+                    </select>
+                    ${task.status === "active" ? `<button style="margin-top:8px;" onclick="takeInWork(${task.id})">📌 Взять в работу</button>` : ""}
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Дедлайн</div>
+                    <input type="date" id="deadline-input" value="${task.deadline || ""}" onchange="changeDeadline(${task.id}, this.value)">
+                </div>
+                <div class="edit-buttons">
+                    <button onclick="enableEdit(${task.id})">✏️ Редактировать</button>
+                    <button class="danger" onclick="deleteTask(${task.id})">🗑 Удалить</button>
+                </div>
+            `;
+        } else {
+            modalBody.innerHTML = `
+                <div class="detail-row">
+                    <div class="detail-label">Текст задачи</div>
+                    <textarea id="edit-text" rows="3">${escapeHtml(task.text)}</textarea>
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Ответственный (без @)</div>
+                    <input type="text" id="edit-assignee" value="${task.assignee || ""}" placeholder="username">
+                </div>
+                <div class="detail-row">
+                    <div class="detail-label">Дедлайн</div>
+                    <input type="date" id="edit-deadline" value="${task.deadline || ""}">
+                </div>
+                <div class="edit-buttons">
+                    <button onclick="saveEdit(${task.id})">💾 Сохранить</button>
+                    <button class="secondary" onclick="cancelEdit(${task.id})">Отмена</button>
+                </div>
+            `;
+        }
+    }
+
+    function enableEdit(taskId) {
+        editMode = true;
+        const task = allTasks.find(t => t.id === taskId);
+        if (task) renderModal(task);
+    }
+
+    async function saveEdit(taskId) {
+        const newText = document.getElementById("edit-text").value.trim();
+        const newAssignee = document.getElementById("edit-assignee").value.trim() || null;
+        const newDeadline = document.getElementById("edit-deadline").value || null;
+        if (!newText) { alert("Текст задачи не может быть пустым"); return; }
+        await updateTask(taskId, { text: newText, assignee: newAssignee, deadline: newDeadline });
+        editMode = false;
+        closeModal();
+        await loadTasks();
+        alert("Задача обновлена");
+    }
+
+    function cancelEdit(taskId) {
+        editMode = false;
+        const task = allTasks.find(t => t.id === taskId);
+        if (task) renderModal(task);
+    }
+
+    async function changeStatus(taskId, newStatus) {
+        await updateTask(taskId, { status: newStatus });
+        closeModal();
+        alert("Статус обновлён");
+    }
+
+    async function changeAssignee(taskId, newAssignee) {
+        await updateTask(taskId, { assignee: newAssignee || null });
+        closeModal();
+        alert("Ответственный изменён");
+    }
+
+    async function takeInWork(taskId) {
+        let currentUsername = null;
+        if (window.Telegram && window.Telegram.WebApp) {
+            const user = window.Telegram.WebApp.initDataUnsafe?.user;
+            if (user && user.username) currentUsername = user.username;
+            else if (user && user.first_name) currentUsername = user.first_name.toLowerCase().replace(/\s/g, '');
+        }
+        if (!currentUsername) {
+            currentUsername = prompt("Введите ваш Telegram username (без @):");
+            if (!currentUsername) return;
+        }
+        await updateTask(taskId, { status: "inprogress", assignee: currentUsername });
+        closeModal();
+        alert(`Вы взяли задачу в работу (ответственный: @${currentUsername})`);
+    }
+
+    async function changeDeadline(taskId, newDeadline) {
+        await updateTask(taskId, { deadline: newDeadline || null });
+        closeModal();
+        alert("Дедлайн обновлён");
+    }
+
+    async function deleteTask(taskId) {
+        if (confirm("Удалить задачу?")) {
+            try {
+                await apiFetch(`${API_BASE}/tasks/${taskId}`, { method: "DELETE" });
+                await loadTasks();
+                closeModal();
+                alert("Задача удалена");
+            } catch (e) {
+                alert("Ошибка удаления: " + e.message);
+            }
+        }
+    }
+
+    function getAssigneeOptions(currentAssignee) {
+        const users = [{ id: null, name: "Не назначен" }];
+        const existingUsers = new Set();
+        allTasks.forEach(t => { if (t.assignee) existingUsers.add(t.assignee); });
+        Array.from(existingUsers).sort().forEach(u => {
+            users.push({ id: u, name: `@${u}` });
+        });
+        return users.map(u => `<option value="${u.id || ""}" ${currentAssignee === u.id ? "selected" : ""}>${u.name}</option>`).join("");
+    }
+
+    function closeModal() {
+        document.getElementById("taskModal").classList.remove("active");
+        editMode = false;
+    }
+
+    function setupFilters() {
+        document.querySelectorAll(".filter-btn").forEach(btn => {
+            btn.addEventListener("click", () => {
+                document.querySelectorAll(".filter-btn").forEach(b => b.classList.remove("active"));
+                btn.classList.add("active");
+                currentFilter = btn.dataset.filter;
+                renderTaskList();
+            });
+        });
+        userSelect.addEventListener("change", () => {
+            selectedUser = userSelect.value;
+            renderTaskList();
+        });
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return "";
+        const parts = dateStr.split("-");
+        return parts.length === 3 ? `${parts[2]}.${parts[1]}.${parts[0]}` : dateStr;
+    }
+
+    function escapeHtml(str) {
+        if (!str) return "";
+        return str.replace(/[&<>]/g, m => m === "&" ? "&amp;" : m === "<" ? "&lt;" : "&gt;");
+    }
+
+    setupFilters();
+    loadTasks();
+</script>
+</body>
+</html>
