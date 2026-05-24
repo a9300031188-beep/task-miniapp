@@ -149,7 +149,7 @@
 <script>
     // ========== НАСТРОЙКИ ==========
     const API_BASE = "https://task-bot-ifzk.onrender.com";
-    const API_SECRET = "MySuperSecretKey2025!";   // замените на ваш реальный API_SECRET
+    const API_SECRET = "MySuperSecretKey2025!";
 
     let allTasks = [];
     let currentFilter = "all";
@@ -159,7 +159,7 @@
 
     const userSelect = document.getElementById("userSelect");
 
-    // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID (сначала из URL, затем из Telegram) ----------
+    // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID ----------
     const urlParams = new URLSearchParams(window.location.search);
     const chatIdFromUrl = urlParams.get('chat_id');
     if (chatIdFromUrl) {
@@ -195,7 +195,7 @@
         currentUser = tg.initDataUnsafe.user;
     }
 
-    // ---------- УНИВЕРСАЛЬНЫЙ FETCH С API-КЛЮЧОМ ----------
+    // ---------- УНИВЕРСАЛЬНЫЙ FETCH ----------
     async function apiFetch(url, options = {}) {
         const headers = {
             'Content-Type': 'application/json',
@@ -210,7 +210,6 @@
         return response;
     }
 
-    // ---------- ЗАГРУЗКА ЗАДАЧ ----------
     async function loadTasks() {
         try {
             const resp = await apiFetch(`${API_BASE}/tasks?chat_id=${currentChatId}`);
@@ -297,13 +296,11 @@
         const task = allTasks.find(t => t.id === taskId);
         if (!task) return;
         editMode = false;
-        // Получаем список участников из существующих задач (можно расширить позже)
-        const members = []; // для простоты пока пустой список, но можно оставить выпадающий список только из assignee
-        renderModal(task, members);
+        renderModal(task);
         document.getElementById("taskModal").classList.add("active");
     }
 
-    function renderModal(task, members = []) {
+    function renderModal(task) {
         const modalBody = document.getElementById("modalBody");
         if (!editMode) {
             const statuses = [
@@ -311,9 +308,8 @@
                 { value: "inprogress", label: "🟡 В работе" },
                 { value: "done", label: "✅ Завершено" }
             ];
-            // Собираем уникальных assignee из существующих задач для выпадающего списка
             const existingAssignees = [...new Set(allTasks.map(t => t.assignee).filter(a => a))];
-            let assigneeOptions = '<option value="">Не назначен</option>';
+            let assigneeOptions = '<option value="null">Не назначен</option>';
             existingAssignees.forEach(a => {
                 const selected = (task.assignee === a) ? "selected" : "";
                 assigneeOptions += `<option value="${escapeHtml(a)}" ${selected}>@${escapeHtml(a)}</option>`;
@@ -344,7 +340,10 @@
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Дедлайн</div>
-                    <input type="date" id="deadline-input" value="${task.deadline || ""}" onchange="changeDeadline(${task.id}, this.value)">
+                    <input type="date" id="deadline-input" value="${task.deadline || ''}">
+                    <button style="margin-top:8px;" onclick="changeDeadline(${task.id}, document.getElementById('deadline-input').value)">
+                        💾 Сохранить дедлайн
+                    </button>
                 </div>
                 <div class="edit-buttons">
                     <button onclick="enableEdit(${task.id})">✏️ Редактировать</button>
@@ -375,14 +374,14 @@
 
     async function assignSelected(taskId) {
         const select = document.getElementById("assignee-select");
-        const assigneeName = select.value;
-        if (!assigneeName) {
+        const assigneeValue = select.value;
+        if (assigneeValue === "null") {
             await updateTask(taskId, { assignee: null, assignee_id: null });
             closeModal();
             alert("Ответственный сброшен");
             return;
         }
-        await updateTask(taskId, { assignee: assigneeName });
+        await updateTask(taskId, { assignee: assigneeValue });
         closeModal();
         alert("Ответственный назначен");
     }
@@ -434,7 +433,7 @@
     function enableEdit(taskId) {
         editMode = true;
         const task = allTasks.find(t => t.id === taskId);
-        if (task) renderModal(task, []);
+        if (task) renderModal(task);
     }
 
     async function saveEdit(taskId) {
@@ -452,7 +451,7 @@
     function cancelEdit(taskId) {
         editMode = false;
         const task = allTasks.find(t => t.id === taskId);
-        if (task) renderModal(task, []);
+        if (task) renderModal(task);
     }
 
     function closeModal() {
