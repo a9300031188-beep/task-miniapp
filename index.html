@@ -159,24 +159,30 @@
 
     const userSelect = document.getElementById("userSelect");
 
-    // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID (БЕЗ FALLBACK) ----------
-    let tg = window.Telegram?.WebApp;
-    if (tg && tg.initDataUnsafe) {
-        if (tg.initDataUnsafe.chat && tg.initDataUnsafe.chat.id) {
-            currentChatId = tg.initDataUnsafe.chat.id;
-            console.log("Chat ID (группа):", currentChatId);
-        } else if (tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-            currentChatId = tg.initDataUnsafe.user.id;
-            console.log("User ID (личный чат):", currentChatId);
-        } else {
-            console.error("Нет данных ни о чате, ни о пользователе:", tg.initDataUnsafe);
-        }
+    // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID (сначала из URL, затем из Telegram) ----------
+    const urlParams = new URLSearchParams(window.location.search);
+    const chatIdFromUrl = urlParams.get('chat_id');
+    if (chatIdFromUrl) {
+        currentChatId = parseInt(chatIdFromUrl);
+        console.log("Chat ID из URL:", currentChatId);
     } else {
-        console.error("Telegram WebApp не обнаружен (открыто вне Telegram)");
+        let tg = window.Telegram?.WebApp;
+        if (tg && tg.initDataUnsafe) {
+            if (tg.initDataUnsafe.chat && tg.initDataUnsafe.chat.id) {
+                currentChatId = tg.initDataUnsafe.chat.id;
+                console.log("Chat ID из Telegram (chat):", currentChatId);
+            } else if (tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
+                currentChatId = tg.initDataUnsafe.user.id;
+                console.log("User ID из Telegram (user):", currentChatId);
+            } else {
+                console.error("Нет данных ни о чате, ни о пользователе:", tg.initDataUnsafe);
+            }
+        } else {
+            console.error("Telegram WebApp не обнаружен (открыто вне Telegram)");
+        }
     }
 
     if (!currentChatId) {
-        // Показываем ошибку и не загружаем задачи
         document.getElementById("taskList").innerHTML = '<div class="empty">❌ Не удалось определить чат. Пожалуйста, откройте приложение через кнопку внутри нужного чата.</div>';
         throw new Error("Chat ID не определён");
     }
@@ -184,6 +190,7 @@
 
     // ---------- ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ----------
     let currentUser = null;
+    let tg = window.Telegram?.WebApp;
     if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
         currentUser = tg.initDataUnsafe.user;
     }
@@ -286,22 +293,12 @@
         } catch (e) { alert("Ошибка обновления: " + e.message); }
     }
 
-    // ---------- ЗАГРУЗКА УЧАСТНИКОВ ГРУППЫ ----------
-    async function loadGroupMembers() {
-        try {
-            const resp = await apiFetch(`${API_BASE}/chat_members/${currentChatId}`);
-            return await resp.json();
-        } catch (e) {
-            console.warn("Не удалось загрузить участников группы:", e);
-            return [];
-        }
-    }
-
     async function openTaskDetail(taskId) {
         const task = allTasks.find(t => t.id === taskId);
         if (!task) return;
         editMode = false;
-        const members = await loadGroupMembers();
+        // Получаем список участников из существующих задач (можно расширить позже)
+        const members = []; // для простоты пока пустой список, но можно оставить выпадающий список только из assignee
         renderModal(task, members);
         document.getElementById("taskModal").classList.add("active");
     }
@@ -314,11 +311,12 @@
                 { value: "inprogress", label: "🟡 В работе" },
                 { value: "done", label: "✅ Завершено" }
             ];
+            // Собираем уникальных assignee из существующих задач для выпадающего списка
+            const existingAssignees = [...new Set(allTasks.map(t => t.assignee).filter(a => a))];
             let assigneeOptions = '<option value="">Не назначен</option>';
-            members.forEach(m => {
-                const display = m.username ? `@${m.username}` : m.name;
-                const selected = (task.assignee_id === m.id) ? "selected" : "";
-                assigneeOptions += `<option value="${m.id}" data-name="${escapeHtml(m.name)}" data-username="${m.username || ''}" ${selected}>${escapeHtml(display)}</option>`;
+            existingAssignees.forEach(a => {
+                const selected = (task.assignee === a) ? "selected" : "";
+                assigneeOptions += `<option value="${escapeHtml(a)}" ${selected}>@${escapeHtml(a)}</option>`;
             });
             const takeWorkButton = (task.status === "active" && currentUser) ? `<button style="margin-top:8px;" onclick="takeInWorkAuto(${task.id})">📌 Взять в работу (авто)</button>` : "";
             modalBody.innerHTML = `
@@ -377,16 +375,14 @@
 
     async function assignSelected(taskId) {
         const select = document.getElementById("assignee-select");
-        const selectedOption = select.options[select.selectedIndex];
-        const userId = select.value;
-        if (!userId) {
+        const assigneeName = select.value;
+        if (!assigneeName) {
             await updateTask(taskId, { assignee: null, assignee_id: null });
             closeModal();
             alert("Ответственный сброшен");
             return;
         }
-        const displayName = selectedOption.getAttribute("data-username") || selectedOption.getAttribute("data-name");
-        await updateTask(taskId, { assignee: displayName, assignee_id: parseInt(userId) });
+        await updateTask(taskId, { assignee: assigneeName });
         closeModal();
         alert("Ответственный назначен");
     }
