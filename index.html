@@ -165,7 +165,7 @@
     // 1. startapp параметр
     let startParam = tg?.initDataUnsafe?.start_param;
     if (startParam && startParam.startsWith("chat")) {
-        currentChatId = parseInt(startParam.replace("chat", ""));
+        currentChatId = -parseInt(startParam.replace("chat", ""));
         console.log("Chat ID из startapp:", currentChatId);
     }
 
