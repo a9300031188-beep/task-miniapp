@@ -65,10 +65,8 @@
         .modal {
             display: none;
             position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
             background: rgba(0,0,0,0.5);
             backdrop-filter: blur(4px);
             z-index: 1000;
@@ -147,19 +145,9 @@
 </div>
 
 <script>
-    document.addEventListener("DOMContentLoaded", () => {
-    const tg = window.Telegram?.WebApp;
-    document.getElementById("taskList").innerHTML = `
-        <div style="padding:16px;font-size:12px;word-break:break-all;background:#fff;border-radius:12px;">
-            <b>startParam:</b> ${tg?.initDataUnsafe?.start_param || '❌ нет'}<br><br>
-            <b>chat:</b> ${JSON.stringify(tg?.initDataUnsafe?.chat) || '❌ нет'}<br><br>
-            <b>URL:</b> ${window.location.href}
-        </div>
-    `;
-});
     // ========== НАСТРОЙКИ ==========
     const API_BASE = "https://task-bot-ifzk.onrender.com";
-    const API_SECRET = "MySuperSecretKey2025!";   // замените на ваш реальный ключ
+    const API_SECRET = "MySuperSecretKey2025!";
 
     let allTasks = [];
     let currentFilter = "all";
@@ -169,55 +157,78 @@
     let currentUser = null;
 
     const userSelect = document.getElementById("userSelect");
-    let tg = window.Telegram?.WebApp;
+    const tg = window.Telegram?.WebApp;
 
-    // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID ----------
-    // 1. startapp параметр
-    let startParam = tg?.initDataUnsafe?.start_param;
-    if (startParam && startParam.startsWith("chat")) {
-        currentChatId = -parseInt(startParam.replace("chat", ""));
-        console.log("Chat ID из startapp:", currentChatId);
-    }
+    // ========== ОПРЕДЕЛЕНИЕ CHAT_ID ==========
+    function resolveChatId() {
+        // 1. initDataUnsafe.start_param (основной способ после tg.ready())
+        const startParam = tg?.initDataUnsafe?.start_param;
+        if (startParam && startParam.startsWith("chat")) {
+            const id = -parseInt(startParam.replace("chat", ""));
+            console.log("Chat ID из initDataUnsafe.start_param:", id);
+            return id;
+        }
 
-    // 2. URL параметр ?chat_id=...
-    if (!currentChatId) {
+        // 2. tgWebAppStartParam прямо из URL (фоллбек — виден до ready())
+        const allSearch = window.location.search + "&" + window.location.hash.replace(/^#/, "");
+        const allParams = new URLSearchParams(allSearch);
+        const tgStart = allParams.get("tgWebAppStartParam");
+        if (tgStart && tgStart.startsWith("chat")) {
+            const id = -parseInt(tgStart.replace("chat", ""));
+            console.log("Chat ID из tgWebAppStartParam (URL):", id);
+            return id;
+        }
+
+        // 3. ?chat_id=... (для тестов в браузере)
         const urlParams = new URLSearchParams(window.location.search);
-        const chatIdFromUrl = urlParams.get('chat_id');
+        const chatIdFromUrl = urlParams.get("chat_id");
         if (chatIdFromUrl) {
-            currentChatId = parseInt(chatIdFromUrl);
-            console.log("Chat ID из URL:", currentChatId);
+            const id = parseInt(chatIdFromUrl);
+            console.log("Chat ID из URL ?chat_id:", id);
+            return id;
         }
-    }
 
-    // 3. Данные из Telegram (chat или user)
-    if (!currentChatId && tg?.initDataUnsafe) {
-        if (tg.initDataUnsafe.chat?.id) {
-            currentChatId = tg.initDataUnsafe.chat.id;
-            console.log("Chat ID из Telegram (chat):", currentChatId);
-        } else if (tg.initDataUnsafe.user?.id) {
-            currentChatId = tg.initDataUnsafe.user.id;
-            console.log("User ID из Telegram (user):", currentChatId);
-        } else {
-            console.error("Нет данных ни о чате, ни о пользователе:", tg.initDataUnsafe);
+        // 4. initDataUnsafe.chat (если открыто из чата напрямую)
+        if (tg?.initDataUnsafe?.chat?.id) {
+            console.log("Chat ID из initDataUnsafe.chat:", tg.initDataUnsafe.chat.id);
+            return tg.initDataUnsafe.chat.id;
         }
+
+        return null;
     }
 
-    if (!currentChatId) {
-        document.getElementById("taskList").innerHTML = '<div class="empty">❌ Не удалось определить чат. Пожалуйста, откройте приложение через кнопку внутри нужного чата.</div>';
-        throw new Error("Chat ID не определён");
-    }
-    console.log("Итоговый ID для API:", currentChatId);
+    function initApp() {
+        currentChatId = resolveChatId();
 
-    // ---------- ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ----------
-    if (tg?.initDataUnsafe?.user) {
-        currentUser = tg.initDataUnsafe.user;
+        if (!currentChatId) {
+            document.getElementById("taskList").innerHTML =
+                '<div class="empty">❌ Не удалось определить чат.<br>Откройте приложение через кнопку в чате.</div>';
+            console.error("Chat ID не определён");
+            return;
+        }
+
+        console.log("Итоговый chat_id для API:", currentChatId);
+
+        if (tg?.initDataUnsafe?.user) {
+            currentUser = tg.initDataUnsafe.user;
+        }
+
+        setupFilters();
+        loadTasks();
     }
 
-    // ---------- API FETCH ----------
+    // Инициализация: сначала говорим Telegram что готовы, потом запускаем
+    if (tg) {
+        tg.ready();
+        tg.expand();
+    }
+    initApp();
+
+    // ========== API FETCH ==========
     async function apiFetch(url, options = {}) {
         const headers = {
-            'Content-Type': 'application/json',
-            'X-API-Key': API_SECRET,
+            "Content-Type": "application/json",
+            "X-API-Key": API_SECRET,
             ...options.headers
         };
         const response = await fetch(url, { ...options, headers });
@@ -228,6 +239,7 @@
         return response;
     }
 
+    // ========== ЗАГРУЗКА ЗАДАЧ ==========
     async function loadTasks() {
         try {
             const resp = await apiFetch(`${API_BASE}/tasks?chat_id=${currentChatId}`);
@@ -236,7 +248,8 @@
             updateUserSelect();
             renderTaskList();
         } catch (e) {
-            document.getElementById("taskList").innerHTML = '<div class="empty">❌ Ошибка загрузки. Проверьте соединение или API-ключ.</div>';
+            document.getElementById("taskList").innerHTML =
+                '<div class="empty">❌ Ошибка загрузки. Проверьте соединение или API-ключ.</div>';
             console.error(e);
         }
     }
@@ -247,7 +260,9 @@
         const users = Array.from(usersSet).sort();
         const currentVal = userSelect.value;
         userSelect.innerHTML = '<option value="all">👥 Все пользователи</option>';
-        users.forEach(u => { userSelect.innerHTML += `<option value="${escapeHtml(u)}">@${escapeHtml(u)}</option>`; });
+        users.forEach(u => {
+            userSelect.innerHTML += `<option value="${escapeHtml(u)}">@${escapeHtml(u)}</option>`;
+        });
         if (currentVal !== "all" && users.includes(currentVal)) userSelect.value = currentVal;
         else userSelect.value = "all";
         selectedUser = userSelect.value;
@@ -269,18 +284,22 @@
     function renderTaskList() {
         const container = document.getElementById("taskList");
         const tasks = getFilteredAndSortedTasks();
-        if (!tasks.length) { container.innerHTML = '<div class="empty">✨ Нет задач.</div>'; return; }
+        if (!tasks.length) {
+            container.innerHTML = '<div class="empty">✨ Нет задач.</div>';
+            return;
+        }
         container.innerHTML = tasks.map(task => {
             let statusClass = "", statusText = "";
-            if (task.status === "active") { statusClass = "status-active"; statusText = "Активно"; }
+            if (task.status === "active")     { statusClass = "status-active";    statusText = "Активно"; }
             else if (task.status === "inprogress") { statusClass = "status-inprogress"; statusText = "В работе"; }
-            else if (task.status === "done") { statusClass = "status-done"; statusText = "✅ Завершено"; }
+            else if (task.status === "done")  { statusClass = "status-done";      statusText = "✅ Завершено"; }
             const assigneeDisplay = task.assignee ? `👤 @${task.assignee}` : "👤 Не назначен";
             const deadlineDisplay = task.deadline ? `⏰ ${formatDate(task.deadline)}` : "";
             return `
                 <div class="task-item ${statusClass}" onclick="openTaskDetail(${task.id})">
                     <div class="task-checkbox" onclick="event.stopPropagation()">
-                        <input type="checkbox" ${task.status === "done" ? "checked" : ""} onchange="toggleStatusQuick(${task.id}, this.checked)">
+                        <input type="checkbox" ${task.status === "done" ? "checked" : ""}
+                               onchange="toggleStatusQuick(${task.id}, this.checked)">
                     </div>
                     <div class="task-content">
                         <div class="task-title">${escapeHtml(task.text)}</div>
@@ -296,8 +315,7 @@
     }
 
     async function toggleStatusQuick(taskId, isChecked) {
-        const newStatus = isChecked ? "done" : "active";
-        await updateTask(taskId, { status: newStatus });
+        await updateTask(taskId, { status: isChecked ? "done" : "active" });
     }
 
     async function updateTask(taskId, updates) {
@@ -307,7 +325,9 @@
                 body: JSON.stringify({ task_id: taskId, ...updates })
             });
             await loadTasks();
-        } catch (e) { alert("Ошибка обновления: " + e.message); }
+        } catch (e) {
+            alert("Ошибка обновления: " + e.message);
+        }
     }
 
     async function openTaskDetail(taskId) {
@@ -322,17 +342,19 @@
         const modalBody = document.getElementById("modalBody");
         if (!editMode) {
             const statuses = [
-                { value: "active", label: "🔵 Активно" },
+                { value: "active",     label: "🔵 Активно" },
                 { value: "inprogress", label: "🟡 В работе" },
-                { value: "done", label: "✅ Завершено" }
+                { value: "done",       label: "✅ Завершено" }
             ];
             const existingAssignees = [...new Set(allTasks.map(t => t.assignee).filter(a => a))];
             let assigneeOptions = '<option value="null">Не назначен</option>';
             existingAssignees.forEach(a => {
-                const selected = (task.assignee === a) ? "selected" : "";
+                const selected = task.assignee === a ? "selected" : "";
                 assigneeOptions += `<option value="${escapeHtml(a)}" ${selected}>@${escapeHtml(a)}</option>`;
             });
-            const takeWorkButton = (task.status === "active" && currentUser) ? `<button style="margin-top:8px;" onclick="takeInWorkAuto(${task.id})">📌 Взять в работу (авто)</button>` : "";
+            const takeWorkButton = (task.status === "active" && currentUser)
+                ? `<button style="margin-top:8px;" onclick="takeInWorkAuto(${task.id})">📌 Взять в работу (авто)</button>`
+                : "";
             modalBody.innerHTML = `
                 <div class="detail-row">
                     <div class="detail-label">Описание</div>
@@ -342,24 +364,24 @@
                     <div class="detail-label">Статус</div>
                     <div class="status-buttons">
                         ${statuses.map(s => `
-                            <button class="${task.status === s.value ? 'secondary' : ''}" onclick="changeStatus(${task.id}, '${s.value}')">
+                            <button class="${task.status === s.value ? "secondary" : ""}"
+                                    onclick="changeStatus(${task.id}, '${s.value}')">
                                 ${s.label}
                             </button>
-                        `).join('')}
+                        `).join("")}
                     </div>
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Ответственный</div>
-                    <select id="assignee-select">
-                        ${assigneeOptions}
-                    </select>
+                    <select id="assignee-select">${assigneeOptions}</select>
                     <button style="margin-top:8px;" onclick="assignSelected(${task.id})">✅ Назначить выбранного</button>
                     ${takeWorkButton}
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Дедлайн</div>
-                    <input type="date" id="deadline-input" value="${task.deadline || ''}">
-                    <button style="margin-top:8px;" onclick="changeDeadline(${task.id}, document.getElementById('deadline-input').value)">
+                    <input type="date" id="deadline-input" value="${task.deadline || ""}">
+                    <button style="margin-top:8px;"
+                            onclick="changeDeadline(${task.id}, document.getElementById('deadline-input').value)">
                         💾 Сохранить дедлайн
                     </button>
                 </div>
@@ -376,7 +398,8 @@
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Ответственный (без @)</div>
-                    <input type="text" id="edit-assignee" value="${task.assignee || ""}" placeholder="username или имя">
+                    <input type="text" id="edit-assignee" value="${task.assignee || ""}"
+                           placeholder="username или имя">
                 </div>
                 <div class="detail-row">
                     <div class="detail-label">Дедлайн</div>
@@ -392,25 +415,23 @@
 
     async function assignSelected(taskId) {
         const select = document.getElementById("assignee-select");
-        const assigneeValue = select.value;
-        if (assigneeValue === "null") {
+        const val = select.value;
+        if (val === "null") {
             await updateTask(taskId, { assignee: null, assignee_id: null });
             closeModal();
             alert("Ответственный сброшен");
             return;
         }
-        await updateTask(taskId, { assignee: assigneeValue });
+        await updateTask(taskId, { assignee: val });
         closeModal();
         alert("Ответственный назначен");
     }
 
     async function takeInWorkAuto(taskId) {
-        if (!currentUser) {
-            alert("Не удалось определить текущего пользователя");
-            return;
-        }
-        const assigneeName = currentUser.username || (currentUser.first_name + (currentUser.last_name ? " " + currentUser.last_name : "")).trim();
-        await updateTask(taskId, { status: "inprogress", assignee: assigneeName, assignee_id: currentUser.id });
+        if (!currentUser) { alert("Не удалось определить текущего пользователя"); return; }
+        const name = currentUser.username ||
+            (currentUser.first_name + (currentUser.last_name ? " " + currentUser.last_name : "")).trim();
+        await updateTask(taskId, { status: "inprogress", assignee: name, assignee_id: currentUser.id });
         closeModal();
         alert("Вы взяли задачу в работу");
     }
@@ -420,7 +441,8 @@
         if (newStatus === "inprogress" && currentUser) {
             const task = allTasks.find(t => t.id === taskId);
             if (!task.assignee_id) {
-                updates.assignee = currentUser.username || (currentUser.first_name + (currentUser.last_name ? " " + currentUser.last_name : "")).trim();
+                updates.assignee = currentUser.username ||
+                    (currentUser.first_name + (currentUser.last_name ? " " + currentUser.last_name : "")).trim();
                 updates.assignee_id = currentUser.id;
             }
         }
@@ -436,15 +458,14 @@
     }
 
     async function deleteTask(taskId) {
-        if (confirm("Удалить задачу?")) {
-            try {
-                await apiFetch(`${API_BASE}/tasks/${taskId}`, { method: "DELETE" });
-                await loadTasks();
-                closeModal();
-                alert("Задача удалена");
-            } catch (e) {
-                alert("Ошибка удаления: " + e.message);
-            }
+        if (!confirm("Удалить задачу?")) return;
+        try {
+            await apiFetch(`${API_BASE}/tasks/${taskId}`, { method: "DELETE" });
+            await loadTasks();
+            closeModal();
+            alert("Задача удалена");
+        } catch (e) {
+            alert("Ошибка удаления: " + e.message);
         }
     }
 
@@ -500,11 +521,10 @@
 
     function escapeHtml(str) {
         if (!str) return "";
-        return str.replace(/[&<>]/g, m => m === "&" ? "&amp;" : m === "<" ? "&lt;" : "&gt;");
+        return str.replace(/[&<>"']/g, m => ({
+            "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+        }[m]));
     }
-
-    setupFilters();
-    loadTasks();
 </script>
 </body>
 </html>
