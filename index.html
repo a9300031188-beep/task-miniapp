@@ -149,36 +149,46 @@
 <script>
     // ========== НАСТРОЙКИ ==========
     const API_BASE = "https://task-bot-ifzk.onrender.com";
-    const API_SECRET = "MySuperSecretKey2025!";
+    const API_SECRET = "MySuperSecretKey2025!";   // замените на ваш реальный ключ
 
     let allTasks = [];
     let currentFilter = "all";
     let selectedUser = "all";
     let editMode = false;
     let currentChatId = null;
+    let currentUser = null;
 
     const userSelect = document.getElementById("userSelect");
+    let tg = window.Telegram?.WebApp;
 
     // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID ----------
-    const urlParams = new URLSearchParams(window.location.search);
-    const chatIdFromUrl = urlParams.get('chat_id');
-    if (chatIdFromUrl) {
-        currentChatId = parseInt(chatIdFromUrl);
-        console.log("Chat ID из URL:", currentChatId);
-    } else {
-        let tg = window.Telegram?.WebApp;
-        if (tg && tg.initDataUnsafe) {
-            if (tg.initDataUnsafe.chat && tg.initDataUnsafe.chat.id) {
-                currentChatId = tg.initDataUnsafe.chat.id;
-                console.log("Chat ID из Telegram (chat):", currentChatId);
-            } else if (tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
-                currentChatId = tg.initDataUnsafe.user.id;
-                console.log("User ID из Telegram (user):", currentChatId);
-            } else {
-                console.error("Нет данных ни о чате, ни о пользователе:", tg.initDataUnsafe);
-            }
+    // 1. startapp параметр
+    let startParam = tg?.initDataUnsafe?.start_param;
+    if (startParam && startParam.startsWith("chat")) {
+        currentChatId = parseInt(startParam.replace("chat", ""));
+        console.log("Chat ID из startapp:", currentChatId);
+    }
+
+    // 2. URL параметр ?chat_id=...
+    if (!currentChatId) {
+        const urlParams = new URLSearchParams(window.location.search);
+        const chatIdFromUrl = urlParams.get('chat_id');
+        if (chatIdFromUrl) {
+            currentChatId = parseInt(chatIdFromUrl);
+            console.log("Chat ID из URL:", currentChatId);
+        }
+    }
+
+    // 3. Данные из Telegram (chat или user)
+    if (!currentChatId && tg?.initDataUnsafe) {
+        if (tg.initDataUnsafe.chat?.id) {
+            currentChatId = tg.initDataUnsafe.chat.id;
+            console.log("Chat ID из Telegram (chat):", currentChatId);
+        } else if (tg.initDataUnsafe.user?.id) {
+            currentChatId = tg.initDataUnsafe.user.id;
+            console.log("User ID из Telegram (user):", currentChatId);
         } else {
-            console.error("Telegram WebApp не обнаружен (открыто вне Telegram)");
+            console.error("Нет данных ни о чате, ни о пользователе:", tg.initDataUnsafe);
         }
     }
 
@@ -189,13 +199,11 @@
     console.log("Итоговый ID для API:", currentChatId);
 
     // ---------- ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ----------
-    let currentUser = null;
-    let tg = window.Telegram?.WebApp;
-    if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
+    if (tg?.initDataUnsafe?.user) {
         currentUser = tg.initDataUnsafe.user;
     }
 
-    // ---------- УНИВЕРСАЛЬНЫЙ FETCH ----------
+    // ---------- API FETCH ----------
     async function apiFetch(url, options = {}) {
         const headers = {
             'Content-Type': 'application/json',
