@@ -118,7 +118,6 @@
             padding: 0;
         }
         .empty { text-align: center; padding: 40px; color: #6c757d; }
-        .loading-small { text-align: center; padding: 10px; color: #6c757d; }
     </style>
 </head>
 <body>
@@ -150,38 +149,46 @@
 <script>
     // ========== НАСТРОЙКИ ==========
     const API_BASE = "https://task-bot-ifzk.onrender.com";
-    const API_SECRET = "MySuperSecretKey2025!";  // замените на ваш реальный ключ
+    const API_SECRET = "MySuperSecretKey2025!";   // замените на ваш реальный API_SECRET
 
     let allTasks = [];
     let currentFilter = "all";
     let selectedUser = "all";
     let editMode = false;
-    let currentChatId = null;   // будет заполнен автоматически
+    let currentChatId = null;
 
     const userSelect = document.getElementById("userSelect");
 
-    // ---------- Определение chat_id ----------
+    // ---------- ОПРЕДЕЛЕНИЕ CHAT_ID (БЕЗ FALLBACK) ----------
     let tg = window.Telegram?.WebApp;
     if (tg && tg.initDataUnsafe) {
         if (tg.initDataUnsafe.chat && tg.initDataUnsafe.chat.id) {
             currentChatId = tg.initDataUnsafe.chat.id;
+            console.log("Chat ID (группа):", currentChatId);
         } else if (tg.initDataUnsafe.user && tg.initDataUnsafe.user.id) {
             currentChatId = tg.initDataUnsafe.user.id;
+            console.log("User ID (личный чат):", currentChatId);
+        } else {
+            console.error("Нет данных ни о чате, ни о пользователе:", tg.initDataUnsafe);
         }
+    } else {
+        console.error("Telegram WebApp не обнаружен (открыто вне Telegram)");
     }
-    if (!currentChatId) {
-        currentChatId = prompt("Введите chat_id (число):");
-        if (!currentChatId) throw new Error("Не введён chat_id");
-    }
-    console.log("Chat ID:", currentChatId);
 
-    // ---------- Текущий пользователь ----------
+    if (!currentChatId) {
+        // Показываем ошибку и не загружаем задачи
+        document.getElementById("taskList").innerHTML = '<div class="empty">❌ Не удалось определить чат. Пожалуйста, откройте приложение через кнопку внутри нужного чата.</div>';
+        throw new Error("Chat ID не определён");
+    }
+    console.log("Итоговый ID для API:", currentChatId);
+
+    // ---------- ТЕКУЩИЙ ПОЛЬЗОВАТЕЛЬ ----------
     let currentUser = null;
     if (tg && tg.initDataUnsafe && tg.initDataUnsafe.user) {
         currentUser = tg.initDataUnsafe.user;
     }
 
-    // ---------- Универсальный fetch с API-ключом ----------
+    // ---------- УНИВЕРСАЛЬНЫЙ FETCH С API-КЛЮЧОМ ----------
     async function apiFetch(url, options = {}) {
         const headers = {
             'Content-Type': 'application/json',
@@ -196,7 +203,7 @@
         return response;
     }
 
-    // ---------- Загрузка задач ----------
+    // ---------- ЗАГРУЗКА ЗАДАЧ ----------
     async function loadTasks() {
         try {
             const resp = await apiFetch(`${API_BASE}/tasks?chat_id=${currentChatId}`);
@@ -210,7 +217,6 @@
         }
     }
 
-    // ---------- Фильтры и отрисовка ----------
     function updateUserSelect() {
         const usersSet = new Set();
         allTasks.forEach(task => { if (task.assignee) usersSet.add(task.assignee); });
@@ -280,7 +286,7 @@
         } catch (e) { alert("Ошибка обновления: " + e.message); }
     }
 
-    // ---------- Детальное окно с возможностью назначить ответственного из группы ----------
+    // ---------- ЗАГРУЗКА УЧАСТНИКОВ ГРУППЫ ----------
     async function loadGroupMembers() {
         try {
             const resp = await apiFetch(`${API_BASE}/chat_members/${currentChatId}`);
@@ -295,7 +301,6 @@
         const task = allTasks.find(t => t.id === taskId);
         if (!task) return;
         editMode = false;
-        // Загружаем участников группы для выпадающего списка (асинхронно, но покажем пустой список)
         const members = await loadGroupMembers();
         renderModal(task, members);
         document.getElementById("taskModal").classList.add("active");
@@ -309,14 +314,12 @@
                 { value: "inprogress", label: "🟡 В работе" },
                 { value: "done", label: "✅ Завершено" }
             ];
-            // Строим выпадающий список из участников группы
             let assigneeOptions = '<option value="">Не назначен</option>';
             members.forEach(m => {
                 const display = m.username ? `@${m.username}` : m.name;
                 const selected = (task.assignee_id === m.id) ? "selected" : "";
                 assigneeOptions += `<option value="${m.id}" data-name="${escapeHtml(m.name)}" data-username="${m.username || ''}" ${selected}>${escapeHtml(display)}</option>`;
             });
-            // Кнопка "Взять в работу" (если задача активна)
             const takeWorkButton = (task.status === "active" && currentUser) ? `<button style="margin-top:8px;" onclick="takeInWorkAuto(${task.id})">📌 Взять в работу (авто)</button>` : "";
             modalBody.innerHTML = `
                 <div class="detail-row">
@@ -377,7 +380,6 @@
         const selectedOption = select.options[select.selectedIndex];
         const userId = select.value;
         if (!userId) {
-            // Сбросить ответственного
             await updateTask(taskId, { assignee: null, assignee_id: null });
             closeModal();
             alert("Ответственный сброшен");
@@ -402,7 +404,6 @@
 
     async function changeStatus(taskId, newStatus) {
         let updates = { status: newStatus };
-        // Если статус "В работе" и нет ответственного, назначить текущего
         if (newStatus === "inprogress" && currentUser) {
             const task = allTasks.find(t => t.id === taskId);
             if (!task.assignee_id) {
@@ -413,12 +414,6 @@
         await updateTask(taskId, updates);
         closeModal();
         alert("Статус обновлён");
-    }
-
-    async function changeAssignee(taskId, newAssignee, assigneeId) {
-        await updateTask(taskId, { assignee: newAssignee, assignee_id: assigneeId });
-        closeModal();
-        alert("Ответственный изменён");
     }
 
     async function changeDeadline(taskId, newDeadline) {
